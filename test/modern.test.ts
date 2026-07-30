@@ -14,6 +14,21 @@ describe('modern version metadata', () => {
 		expect(Version.autoDetect([10, 0])).toBe('1.19')
 	})
 
+	test('loads functions using paths relative to the data directory', async () => {
+		const zip = new JSZip()
+		zip.file('pack.mcmeta', JSON.stringify({ pack: { pack_format: 41, description: 'test' } }))
+		zip.file('data/test/functions/load.mcfunction', 'say loaded')
+		const buffer = await zip.generateAsync({ type: 'arraybuffer' })
+		;(globalThis as any).window ??= { crypto: globalThis.crypto }
+		const file = { name: 'test.zip', arrayBuffer: async () => buffer } as File
+		const [pack] = await Pack.fromZip(file)
+		expect(pack.data.functions).toMatchObject([{
+			name: 'test:load',
+			path: 'data/test/functions/load.mcfunction',
+			data: ['say loaded'],
+		}])
+	})
+
 	test('moves legacy registry directories without changing the pack type', async () => {
 		const root = new JSZip()
 		root.file('data/test/functions/load.mcfunction', 'say loaded')
