@@ -1,3 +1,4 @@
+import JSZip from 'jszip'
 import type { PackFile } from '../src/Pack'
 import { categories, Pack } from '../src/Pack'
 import { Version } from '../src/Version'
@@ -14,7 +15,7 @@ export function createUpgrader(from: Version, to: Version, format?: number) {
 		const pack: Pack = {
 			name: 'test',
 			id: 'test',
-			root: null as any,
+			root: new JSZip(),
 			meta: {
 				name: 'pack.mcmeta',
 				data: {
@@ -48,9 +49,11 @@ export function createUpgrader(from: Version, to: Version, format?: number) {
 		})
 
 		return Object.fromEntries(Categories.map((category) => {
-			const files: Record<string, unknown> = Object.fromEntries(pack.data[category].map(({ name, data }) => {
-				return [name, data]
-			}))
+			const files: Record<string, unknown> = Object.fromEntries(pack.data[category]
+				.filter(({ deleted }) => !deleted)
+				.map(({ name, data }) => {
+					return [name, data]
+				}))
 			return [category, files]
 		})) as PackData
 	}

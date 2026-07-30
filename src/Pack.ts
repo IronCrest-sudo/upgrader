@@ -7,28 +7,90 @@ import { Fixes } from './fixes'
 import type { VersionOrAuto } from './Version'
 import { Version } from './Version'
 
+/** Logical registry names used by fixes. Legacy plural names stay canonical here
+ * so the existing migrations remain source compatible. Paths are selected per
+ * Minecraft version when packs are read and written. */
 export const categories = [
 	'advancements',
+	'banner_pattern',
+	'cat_sound_variant',
+	'cat_variant',
+	'chat_type',
+	'chicken_sound_variant',
+	'chicken_variant',
+	'cow_sound_variant',
+	'cow_variant',
+	'damage_type',
+	'decorated_pot_pattern',
+	'dialog',
 	'dimension',
 	'dimension_type',
+	'enchantment',
+	'enchantment_provider',
+	'frog_variant',
+	'instrument',
+	'item_modifiers',
+	'jukebox_song',
 	'loot_tables',
+	'number_provider',
+	'painting_variant',
+	'pig_sound_variant',
+	'pig_variant',
 	'predicates',
+	'recipes',
+	'slot_source',
+	'tags/banner_pattern',
+	'tags/biome',
 	'tags/blocks',
+	'tags/cat_variant',
+	'tags/damage_type',
+	'tags/dialog',
+	'tags/enchantment',
 	'tags/entity_types',
 	'tags/fluids',
+	'tags/functions',
 	'tags/game_events',
+	'tags/instrument',
 	'tags/items',
+	'tags/painting_variant',
+	'tags/point_of_interest_type',
+	'tags/potion',
+	'tags/recipe',
+	'tags/slot_source',
+	'tags/structure',
+	'tags/timeline',
+	'tags/villager_trade',
 	'tags/worldgen/biome',
 	'tags/worldgen/configured_structure_feature',
 	'tags/worldgen/flat_level_generator_preset',
+	'tags/worldgen/placed_feature',
 	'tags/worldgen/structure',
 	'tags/worldgen/world_preset',
+	'test_environment',
+	'sulfur_cube_archetype',
+	'test_instance',
+	'timeline',
+	'trade_set',
+	'trim_material',
+	'trim_pattern',
+	'trial_spawner',
+	'villager_trade',
+	'wolf_sound_variant',
+	'wolf_variant',
+	'world_clock',
+	'zombie_nautilus_variant',
 	'worldgen/biome',
+	'worldgen/carver',
 	'worldgen/configured_carver',
 	'worldgen/configured_feature',
 	'worldgen/configured_structure_feature',
 	'worldgen/configured_surface_builder',
 	'worldgen/density_function',
+	'worldgen/feature',
+	'worldgen/flat_level_generator_preset',
+	'worldgen/material_condition',
+	'worldgen/material_rule',
+	'worldgen/multi_noise_biome_source_parameter_list',
 	'worldgen/noise_settings',
 	'worldgen/noise',
 	'worldgen/placed_feature',
@@ -36,12 +98,33 @@ export const categories = [
 	'worldgen/structure',
 	'worldgen/structure_set',
 	'worldgen/template_pool',
+	'worldgen/world_preset',
 ] as const
+
+const ModernDirectories: Record<string, string> = {
+	advancements: 'advancement',
+	item_modifiers: 'item_modifier',
+	loot_tables: 'loot_table',
+	predicates: 'predicate',
+	recipes: 'recipe',
+	structures: 'structure',
+	functions: 'function',
+	'tags/blocks': 'tags/block',
+	'tags/entity_types': 'tags/entity_type',
+	'tags/fluids': 'tags/fluid',
+	'tags/functions': 'tags/function',
+	'tags/game_events': 'tags/game_event',
+	'tags/items': 'tags/item',
+}
+
+const LegacyDirectories = Object.fromEntries(Object.entries(ModernDirectories).map(([legacy, modern]) => [modern, legacy]))
 
 export type PackFile = {
 	name: string,
 	data: any,
 	indent?: string,
+	/** Original path relative to the data pack root. */
+	path?: string,
 	error?: string,
 	deleted?: boolean,
 }
@@ -59,6 +142,7 @@ export type Pack = {
 	root: JSZip,
 	status: PackStatus,
 	meta: PackFile,
+	target?: Version,
 	data: {
 		[category: string]: PackFile[],
 	},
@@ -83,40 +167,51 @@ export namespace Pack {
 	}
 
 	async function loadPack(name: string, root: JSZip): Promise<Pack> {
+		const metaObject = root.file('pack.mcmeta')
+		if (!metaObject) throw new Error('Cannot read "pack.mcmeta".')
 		const pack: Pack = {
 			id: hexId(),
-			name: name,
+			name,
 			root,
 			status: 'loaded',
 			data: {},
 			meta: {
 				name: 'pack',
-				...await loadJson(root.file('pack.mcmeta')!),
+				path: 'pack.mcmeta',
+				...await loadJson(metaObject),
 			},
 		}
 		await Promise.all(categories.map(async category => {
 			pack.data[category] = await loadCategory(root.folder('data')!, category)
 		}))
 		pack.data.functions = await loadFunctions(root.folder('data')!)
-		console.log(pack)
 		return pack
 	}
 
+	function directoryAliases(category: string) {
+		return [...new Set([category, ModernDirectories[category], LegacyDirectories[category]].filter((v): v is string => typeof v === 'string'))]
+	}
+
+	function targetDirectory(category: string, target: Version) {
+		return Version.atLeast(target, '1.21') ? (ModernDirectories[category] ?? category) : (LegacyDirectories[category] ?? category)
+	}
+
 	async function loadCategory(root: JSZip, category: string): Promise<PackFile[]> {
-		const matcher = new RegExp(`^([^\/]+)\/${category}\/(.*)\.json$`)
-		const files: { name: string, file: JSZipObject }[] = []
+		const aliases = directoryAliases(category).map(escapeRegExp).join('|')
+		const matcher = new RegExp(`^([^/]+)/(${aliases})/(.*)\\.json$`)
+		const files: { name: string, path: string, file: JSZipObject }[] = []
 		root.forEach((path, file) => {
 			const match = path.match(matcher)
-			if (match && match[1] && match[2]) {
-				files.push({ name: `${match[1]}:${match[2]}`, file })
+			if (match?.[1] && match[3] && !file.dir) {
+				files.push({ name: `${match[1]}:${match[3]}`, path: `data/${path}`, file })
 			}
 		})
-		return Promise.all(files.map(async ({ name, file }) => {
+		return Promise.all(files.map(async ({ name, path, file }) => {
 			try {
-				const data = await loadJson(file)
-				return { name, ...data }
+				const parsed = await loadJson(file)
+				return { name, path, ...parsed }
 			} catch (e: any) {
-				return { name, data: undefined, error: e.message }
+				return { name, path, data: undefined, error: e.message }
 			}
 		}))
 	}
@@ -126,7 +221,7 @@ export namespace Pack {
 		const indent = detectIndent(text).indent
 		try {
 			text = text.replaceAll('\u200B', '').replaceAll('\u200C', '').replaceAll('\u200D', '').replaceAll('\uFEFF', '')
-			text = text.split('\n').map(l => l.replace(/^([^"\/]+)\/\/.*/, '$1')).join('\n')
+			text = text.split('\n').map(l => l.replace(/^([^"/]+)\/\/.*/, '$1')).join('\n')
 			return { data: JSON.parse(stripJsonComments(text)), indent }
 		} catch (e: any) {
 			throw new Error(`Cannot parse file "${file.name}": ${e.message}.`)
@@ -134,12 +229,13 @@ export namespace Pack {
 	}
 
 	async function loadFunctions(root: JSZip): Promise<PackFile[]> {
-		const matcher = /([^\/]+)\/functions\/(.*)\.mcfunction$/
-		return Promise.all(root.filter((path) => path.match(matcher) !== null)
+		const matcher = /^([^/]+)\/(functions|function)\/(.*)\.mcfunction$/
+		return Promise.all(root.filter((path, file) => !file.dir && matcher.test(path))
 			.map(async file => {
-				const m = file.name.match(matcher)
+				const match = file.name.match(matcher)!
 				return {
-					name: `${m![1]}:${m![2]}`,
+					name: `${match[1]}:${match[3]}`,
+					path: `data/${file.name}`,
 					data: (await loadText(file)).split('\n'),
 				}
 			})
@@ -154,10 +250,11 @@ export namespace Pack {
 		if (pack.status !== 'upgraded') {
 			throw new Error(`Cannot download pack with status ${pack.status}.`)
 		}
+		if (!pack.target) throw new Error('Cannot determine the target version.')
 		categories.forEach(category => {
-			writeCategory(pack.root.folder('data')!, category, pack.data[category] ?? [])
+			writeCategory(pack, category, pack.data[category] ?? [])
 		})
-		writeFunctions(pack.root.folder('data')!, pack.data.functions ?? [])
+		writeFunctions(pack, pack.data.functions ?? [])
 		writeJson(pack.root, 'pack.mcmeta', pack.meta.data, pack.meta.indent)
 		const blob = await pack.root.generateAsync({ type: 'blob', compression: 'DEFLATE' })
 		const url = URL.createObjectURL(blob)
@@ -165,10 +262,15 @@ export namespace Pack {
 		return url
 	}
 
-	function writeCategory(root: JSZip, category: string, data: PackFile[]) {
-		data.forEach(({ name, data, indent, error, deleted }) => {
-			const [namespace, id] = name.split(':')
-			const path = `${namespace}/${category}/${id}.json`
+	function writeCategory(pack: Pack, category: string, data: PackFile[]) {
+		const root = pack.root.folder('data')!
+		const directory = targetDirectory(category, pack.target!)
+		data.forEach(({ name, data, indent, path: originalPath, error, deleted }) => {
+			const separator = name.indexOf(':')
+			const namespace = separator === -1 ? 'minecraft' : name.slice(0, separator)
+			const id = separator === -1 ? name : name.slice(separator + 1)
+			const path = `${namespace}/${directory}/${id}.json`
+			if (originalPath && originalPath !== `data/${path}`) pack.root.remove(originalPath)
 			if (deleted) {
 				root.remove(path)
 			} else if (!error) {
@@ -177,10 +279,15 @@ export namespace Pack {
 		})
 	}
 
-	function writeFunctions(root: JSZip, functions: PackFile[]) {
-		functions.forEach(({ name, data, error, deleted }) => {
-			const [namespace, id] = name.split(':')
-			const path = `${namespace}/functions/${id}.mcfunction`
+	function writeFunctions(pack: Pack, functions: PackFile[]) {
+		const root = pack.root.folder('data')!
+		const directory = targetDirectory('functions', pack.target!)
+		functions.forEach(({ name, data, path: originalPath, error, deleted }) => {
+			const separator = name.indexOf(':')
+			const namespace = separator === -1 ? 'minecraft' : name.slice(0, separator)
+			const id = separator === -1 ? name : name.slice(separator + 1)
+			const path = `${namespace}/${directory}/${id}.mcfunction`
+			if (originalPath && originalPath !== `data/${path}`) pack.root.remove(originalPath)
 			if (deleted) {
 				root.remove(path)
 			} else if (!error) {
@@ -190,7 +297,7 @@ export namespace Pack {
 	}
 
 	function writeJson(zip: JSZip, path: string, data: any, indent?: string) {
-		const text = JSON.stringify(data, null, indent) + '\n'
+		const text = JSON.stringify(data, null, indent || '\t') + '\n'
 		writeText(zip, path, text)
 	}
 
@@ -198,24 +305,65 @@ export namespace Pack {
 		zip.file(path, data)
 	}
 
+	/** Move every legacy registry directory, including binary structures and
+	 * registries unknown to this version of the upgrader. */
+	export async function useModernDirectories(pack: Pack, ctx: FixContext) {
+		const files: { path: string, target: string, file: JSZipObject }[] = []
+		pack.root.folder('data')!.forEach((path, file) => {
+			if (file.dir) return
+			const parts = path.split('/')
+			if (parts.length < 3) return
+			const category = parts[1] === 'tags' && parts.length >= 4 ? `tags/${parts[2]}` : parts[1]
+			const modern = ModernDirectories[category]
+			if (!modern) return
+			const consumed = category.startsWith('tags/') ? 3 : 2
+			const target = [...parts.slice(0, category.startsWith('tags/') ? 1 : 1), ...modern.split('/'), ...parts.slice(consumed)].join('/')
+			files.push({ path, target, file })
+		})
+
+		for (const { path, target, file } of files) {
+			const root = pack.root.folder('data')!
+			const conflict = root.file(target) !== null
+			if (conflict) {
+				ctx.warn(`Both legacy and modern data pack paths exist; kept ${target} and removed ${path}.`)
+			} else {
+				root.file(target, await file.async('uint8array'), {
+					date: file.date,
+					comment: file.comment,
+					unixPermissions: file.unixPermissions,
+					dosPermissions: file.dosPermissions,
+				})
+			}
+			root.remove(path)
+			const oldFullPath = `data/${path}`
+			const newFullPath = `data/${target}`
+			Object.values(pack.data).flat().forEach(packFile => {
+				if (packFile.path !== oldFullPath) return
+				if (conflict) packFile.deleted = true
+				else packFile.path = newFullPath
+			})
+		}
+	}
+
 	export async function upgrade(pack: Pack, config: UpgradeConfig) {
 		if (pack.status !== 'loaded') {
 			throw new Error(`Cannot upgrade pack with status '${pack.status}'.`)
 		}
 
+		const detectedFormat = Version.readPackFormat(pack.meta.data.pack)
+		if (!detectedFormat) throw new Error('Cannot find a valid pack format in pack.mcmeta.')
 		let source: Version
-		const packFormat = pack.meta.data.pack.pack_format
 		if (config.source === 'auto') {
-			const detectedVersion = Version.autoDetect(packFormat)
+			const detectedVersion = Version.autoDetect(detectedFormat)
 			if (detectedVersion === undefined) {
-				source = Version.autoDetectOrFallback(packFormat)
-				config.onWarning(`No matching version found for pack format ${packFormat}, using fallback ${source}`)
+				source = Version.autoDetectOrFallback(detectedFormat)
+				config.onWarning(`No matching version found for pack format ${Version.formatName(detectedFormat)}, using fallback ${source}`)
 			} else {
 				source = detectedVersion
 			}
 		} else {
-			if (packFormat !== Version.packFormat(config.source)) {
-				throw new Error(`Found pack format ${packFormat}, which does not match version ${config.source}`)
+			if (!Version.samePackFormat(detectedFormat, Version.packFormat(config.source))) {
+				throw new Error(`Found pack format ${Version.formatName(detectedFormat)}, which does not match version ${config.source}`)
 			}
 			source = config.source
 		}
@@ -223,6 +371,7 @@ export namespace Pack {
 		if (Version.order(target, source)) {
 			throw new Error(`Invalid version range: ${source} > ${target}`)
 		}
+		pack.target = target
 
 		const ctx: FixContext = {
 			warn: config.onWarning,
@@ -231,13 +380,13 @@ export namespace Pack {
 			target: () => target,
 			config: (key: keyof FixConfig) => config.features[key],
 			read: (category: string, name: string) => {
-				return pack.data[category].find(f =>
+				return pack.data[category]?.find(f =>
 					f.error === undefined &&
 					f.name.replace(/^minecraft:/, '') === name.replace(/^minecraft:/, ''))
 			},
 			create: (category: string, name: string, data: any) => {
-				pack.data[category].push({
-					name: name,
+				(pack.data[category] ??= []).push({
+					name,
 					indent: pack.meta.indent,
 					data,
 				})
@@ -257,10 +406,11 @@ type UpgradeConfig = {
 	onWarning: (message: string, files?: string[]) => unknown,
 }
 
-const dec2hex = (dec: number) => ('0' + dec.toString(16)).substr(-2)
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const dec2hex = (dec: number) => ('0' + dec.toString(16)).slice(-2)
 
 export function hexId(length = 12) {
-	var arr = new Uint8Array(length / 2)
+	const arr = new Uint8Array(length / 2)
 	window.crypto.getRandomValues(arr)
 	return Array.from(arr, dec2hex).join('')
 }
@@ -276,21 +426,6 @@ export function MockPack(): Pack {
 			name: 'pack.mcmeta',
 			data: { pack: { pack_format: 8, description: '' } },
 		},
-		data: {
-			'worldgen/biome': [
-				{
-					name: 'test:plains',
-					data: { features: [ ['red'] ] },
-				},
-				{
-					name: 'test:desert',
-					data: { features: [ ['black', 'red', 'yellow', 'green'] ] },
-				},
-				{
-					name: 'test:jungle',
-					data: { features: [ ['green', 'yellow', 'red'] ] },
-				},
-			],
-		},
+		data: Object.fromEntries([...categories, 'functions'].map(category => [category, []])),
 	}
 }

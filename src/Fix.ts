@@ -1,4 +1,5 @@
 import type { categories, Pack, PackFile } from './Pack'
+import type { PackFormat } from './Version'
 import { Version } from './Version'
 
 export type Fix = (pack: Pack, ctx: FixContext) => Promise<unknown>
@@ -96,14 +97,17 @@ export namespace Fix {
 		}
 	}
 
-	export function packFormat(format: number): Fix {
-		return Fix.when('packFormat', async pack => pack.meta.data.pack.pack_format = format)
+	export function packFormat(format: number | PackFormat): Fix {
+		const normalized: PackFormat = typeof format === 'number' ? [format, 0] : format
+		return Fix.when('packFormat', async pack => Version.writePackFormat(pack.meta.data.pack, normalized))
 	}
 
 	export function rename(from: string, to: string): Fix {
 		return async (pack) => {
-			pack.data[to] = pack.data[from].map(f => ({ ...f }))
-			pack.data[from].forEach((file) => file.deleted = true)
+			const source = pack.data[from] ?? []
+			const target = pack.data[to] ??= []
+			target.push(...source.filter(file => !file.deleted).map(file => ({ ...file, path: undefined })))
+			source.forEach(file => file.deleted = true)
 		}
 	}
 }

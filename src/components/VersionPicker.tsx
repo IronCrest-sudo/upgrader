@@ -10,7 +10,7 @@ type VersionPickerProps = {
 export function VersionPicker({ value, onChange, allowAuto }: VersionPickerProps) {
 	const select = useRef<HTMLSelectElement>(null)
 	const change = () => {
-		onChange(select.current.value as Version)
+		if (select.current) onChange(select.current.value as Version)
 	}
 	return <select class="version-picker" ref={select} value={value} onChange={change}>
 		{allowAuto && <option value="auto">Auto-detect</option>}

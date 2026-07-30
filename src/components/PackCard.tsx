@@ -83,7 +83,7 @@ export function PackCard({ pack, config, source, target, onError, onRemove, onDo
 
 	useEffect(() => {
 		if (doDownload) {
-			downloadRef.current.click()
+			downloadRef.current?.click()
 		}
 	}, [doDownload])
 

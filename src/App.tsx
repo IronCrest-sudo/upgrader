@@ -10,6 +10,8 @@ import { Store } from './Store'
 import type { VersionOrAuto } from './Version'
 import { Version } from './Version'
 
+const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/misode/upgrader'
+
 export type AppError = {
 	id: string,
 	process: 'loading' | 'upgrading',
@@ -111,7 +113,7 @@ export function App() {
 			{(source !== 'auto' && Version.order(target, source))
 				? <p class="error-message">Invalid version range</p>
 				: (Version.isWorkInProgress(source === 'auto' ? target : source, target))
-					? <p class="warning-message">This tool is no longer maintained past 1.20</p>
+					? <p class="warning-message">Snapshot targets are experimental. Back up packs and verify the result in Minecraft.</p>
 					: null}
 		</div>
 		<div class="configs">
@@ -124,7 +126,7 @@ export function App() {
 		</div>
 		<div class="footer">
 			<p>Developed by Misode</p>
-			<p>Source code on <a href="https://github.com/misode/upgrader" target="_blank">GitHub</a></p>
+			<p>Source code on <a href={REPOSITORY_URL} target="_blank">GitHub</a></p>
 			<p class="donate">
 				{Octicon.heart}
 				<a href="https://ko-fi.com/misode" target="_blank">Donate</a>
@@ -134,7 +136,7 @@ export function App() {
 			{errors.map(e => {
 				const title = `${e.error.name}: ${e.error.message}`
 				const body = `An error occurred while ${e.process} a data pack.\nData Pack: <!-- ATTACH YOUR DATAPACK HERE -->\n\n\`\`\`\n${e.stacktrace ?? e.error.stack}\n\`\`\`\n`
-				const url = `https://github.com/misode/upgrader/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}\n`
+				const url = `${REPOSITORY_URL}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}\n`
 				return <div class="main-error">
 					<p>Something went wrong {e.process} the data pack:</p>
 					<p class="error-message">{e.error.message}</p>
