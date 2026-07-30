@@ -230,16 +230,18 @@ export namespace Pack {
 
 	async function loadFunctions(root: JSZip): Promise<PackFile[]> {
 		const matcher = /^([^/]+)\/(functions|function)\/(.*)\.mcfunction$/
-		return Promise.all(root.filter((path, file) => !file.dir && matcher.test(path))
-			.map(async file => {
-				const match = file.name.match(matcher)!
-				return {
-					name: `${match[1]}:${match[3]}`,
-					path: `data/${file.name}`,
-					data: (await loadText(file)).split('\n'),
-				}
-			})
-		)
+		const files: { name: string, path: string, file: JSZipObject }[] = []
+		root.forEach((path, file) => {
+			const match = path.match(matcher)
+			if (match?.[1] && match[3] && !file.dir) {
+				files.push({ name: `${match[1]}:${match[3]}`, path: `data/${path}`, file })
+			}
+		})
+		return Promise.all(files.map(async ({ name, path, file }) => ({
+			name,
+			path,
+			data: (await loadText(file)).split('\n'),
+		})))
 	}
 
 	async function loadText(file: JSZipObject) {
