@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks'
+import { useRef, useState } from 'preact/hooks'
 import { mapStackTrace } from 'sourcemapped-stacktrace'
 import { Config } from './components/Config'
 import { Octicon } from './components/Octicon'
@@ -46,43 +46,49 @@ export function App() {
 
 	const addError = (process: 'loading' | 'upgrading', error: Error) => {
 		const id = hexId()
-		const stack = error.stack!.split('\n').map(line => {
+		const stack = (error.stack ?? `${error.name}: ${error.message}`).split('\n').map(line => {
 			return line.replace(/^(\s+)at (?:async )?(https?:.*)/, '$1at ($2)')
 		})
+		setErrors(current => [...current, { id, process, error }])
 		mapStackTrace(stack.join('\n'), (mapped) => {
 			const stacktrace = stack[0] + '\n' + mapped.map(line => {
 				return line.replace(/..\/..\/src\//, 'src/')
 			}).join('\n')
-			setErrors(errors => errors.map(e => e.id === id ? { ...e, stacktrace } : e))
+			setErrors(current => current.map(e => e.id === id ? { ...e, stacktrace } : e))
 		})
-		setErrors([...errors, { id, process, error }])
+	}
+
+	const loadFiles = async (files: File[]) => {
+		const zipFiles = files.filter(file => file.name.toLowerCase().endsWith('.zip')
+			|| /^(application\/(x-)?zip(-compressed)?|application\/octet-stream)$/.test(file.type))
+		if (zipFiles.length === 0) {
+			addError('loading', new Error('No ZIP file was selected. Compress the data pack as a .zip file first.'))
+			return
+		}
+		const newPacks = await Promise.all(zipFiles.map(async file => {
+			try {
+				return await Pack.fromZip(file)
+			} catch (error: any) {
+				addError('loading', error instanceof Error ? error : new Error(String(error)))
+				console.error(error)
+				return undefined
+			}
+		}))
+		const loaded = newPacks.flat().filter((pack): pack is Pack => pack !== undefined)
+		if (loaded.length > 0) setPacks(current => [...current, ...loaded])
 	}
 
 	const onDrop = async (e: DragEvent) => {
 		e.preventDefault()
-		if(!e.dataTransfer) return
+		if (!e.dataTransfer) return
+		await loadFiles(Array.from(e.dataTransfer.files))
+	}
 
-		const promises = []
-		for (let i = 0; i < e.dataTransfer.files.length; i++) {
-			const file = e.dataTransfer.files[i]
-			if (file.type.match(/^application\/(x-)?zip(-compressed)?$/)) {
-				promises.push(Pack.fromZip(file))
-			}
-		}
-		if (promises.length === 0) {
-			addError('loading', new Error('The dropped files contain no zip files. Please zip the data pack first.'))
-		} else {
-			const newPacks = await Promise.all(promises.map(async promise => {
-				try {
-					return await promise
-				} catch (error: any) {
-					addError('loading', error)
-					console.error(error)
-					return
-				}
-			}))
-			setPacks([...packs, ...newPacks.flat().filter((p): p is Pack => p !== undefined)])
-		}
+	const fileInput = useRef<HTMLInputElement>(null)
+	const onFileInput = async (e: Event) => {
+		const input = e.currentTarget as HTMLInputElement
+		await loadFiles(Array.from(input.files ?? []))
+		input.value = ''
 	}
 
 	const onUpgradeError = (error: Error) => {
@@ -108,7 +114,10 @@ export function App() {
 			</div>
 		</>}
 		<div class="drop">
-			<h1>Drop data pack here</h1>
+			<h1>Drop a zipped data pack here</h1>
+			<input ref={fileInput} class="pack-file-input" type="file" accept=".zip,application/zip,application/x-zip-compressed" multiple onChange={onFileInput} />
+			<button class="choose-pack" type="button" onClick={() => fileInput.current?.click()}>Choose ZIP file</button>
+			<p class="drop-hint">Dragging is supported even when the browser reports no ZIP MIME type.</p>
 			<p>Convert from <VersionPicker value={source} onChange={changeSource} allowAuto/> to <VersionPicker value={target} onChange={changeTarget}/></p>
 			{(source !== 'auto' && Version.order(target, source))
 				? <p class="error-message">Invalid version range</p>
